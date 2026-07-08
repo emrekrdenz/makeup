@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.DS_Store
+vendor/
+outputs/runs/*
+!outputs/runs/.keep
+outputs/*.csv
+outputs/*.zip
+outputs/gratis_product_images/
+work/
