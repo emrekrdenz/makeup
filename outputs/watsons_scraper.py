@@ -71,6 +71,10 @@ REL_MEDIA_RE = re.compile(
     r'(?:"url"\s*:\s*")(/medias/[^"]+?\.(?:jpg|jpeg|png|webp))"',
     re.IGNORECASE,
 )
+PRODUCT_DESCRIPTION_RE = re.compile(
+    r"<e2-product-nested-description\b[^>]*>(.*?)</e2-product-nested-description>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 @dataclass
@@ -186,6 +190,17 @@ def compact_text(value: str) -> str:
     value = re.sub(r"\s+", " ", value)
     value = value.replace(" ,", ",").replace(" .", ".")
     return value.strip()
+
+
+def compact_multiline(value: str) -> str:
+    lines = []
+    for raw_line in value.splitlines():
+        line = raw_line.strip(" \n\t\"'")
+        line = re.sub(r"\s+", " ", line)
+        line = line.replace(" ,", ",").replace(" .", ".")
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def clean_title(value: str) -> str:
@@ -341,6 +356,36 @@ def extract_ingredients(source: str) -> str:
     return max(candidates, key=score)
 
 
+def normalize_product_description(value: str) -> str:
+    value = decode_escaped_source(value)
+    value = re.sub(r"<li\b[^>]*>", "\n• ", value, flags=re.IGNORECASE)
+    value = re.sub(r"</li\s*>", "\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"<br\s*/?>", "\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"</p\s*>", "\n", value, flags=re.IGNORECASE)
+    value = re.sub(r"</h[1-6]\s*>", "\n", value, flags=re.IGNORECASE)
+    value = html_to_text(value)
+    value = re.sub(r"\n\s*\n\s*", "\n\n", value)
+    return compact_multiline(value)
+
+
+def extract_product_description(source: str) -> str:
+    decoded = decode_escaped_source(source)
+    match = PRODUCT_DESCRIPTION_RE.search(decoded)
+    if match:
+        return normalize_product_description(match.group(1))
+
+    text = html_to_text(decoded)
+    match = re.search(
+        r"Ürün Açıklaması\s+Ürün Açıklaması\s+(.*?)(?:\s+Kullanımlar\s+|\s+İçerik Maddeleri\s+|\s+İptal İade Koşulları\s+|\s+Ödeme Yöntemi\s+|\s+Teslimat Seçenekleri\s+|\s+Ürün Detay Bilgisi\s+)",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return compact_multiline(match.group(1))
+
+    return ""
+
+
 def extract_image_urls(source: str, product_id: str) -> List[str]:
     decoded = decode_escaped_source(source)
     urls: List[str] = []
@@ -430,6 +475,7 @@ def parse_product(
         )
 
     ingredients = extract_ingredients(source)
+    product_description = extract_product_description(source)
 
     return {
         "source_category": category_url,
@@ -439,6 +485,7 @@ def parse_product(
         "barcode": extract_barcode(source),
         "ingredients_found": "yes" if ingredients else "no",
         "ingredients": ingredients,
+        "product_details": product_description,
         "image_count": str(len(image_urls)),
         "image_urls": " | ".join(image_urls),
         "image_files": " | ".join(image_files),
@@ -455,6 +502,7 @@ def write_csv(rows: Sequence[Dict[str, str]], output_path: str) -> None:
         "barcode",
         "ingredients_found",
         "ingredients",
+        "product_details",
         "image_count",
         "image_urls",
         "image_files",

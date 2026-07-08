@@ -328,6 +328,13 @@ def write_combined_csv(rows: Sequence[Dict[str, str]], output_path: Path) -> Non
         "barcode",
         "ingredients_found",
         "ingredients",
+        "product_details",
+        "product_features",
+        "usage_recommendations",
+        "warnings",
+        "suitable_for",
+        "suitable_hair_types",
+        "active_ingredients",
         "image_count",
         "image_file",
         "image_url",
@@ -359,6 +366,13 @@ def write_products_xlsx(rows: Sequence[Dict[str, str]], output_path: Path) -> No
         "title",
         "ingredients_found",
         "ingredients",
+        "product_details",
+        "product_features",
+        "usage_recommendations",
+        "warnings",
+        "suitable_for",
+        "suitable_hair_types",
+        "active_ingredients",
         "image_count",
         "image_file",
         "image_url",
@@ -381,11 +395,18 @@ def write_products_xlsx(rows: Sequence[Dict[str, str]], output_path: Path) -> No
         "E": 44,
         "F": 16,
         "G": 70,
-        "H": 13,
-        "I": 48,
-        "J": 48,
-        "K": 48,
-        "L": 48,
+        "H": 70,
+        "I": 52,
+        "J": 52,
+        "K": 42,
+        "L": 42,
+        "M": 42,
+        "N": 42,
+        "O": 13,
+        "P": 48,
+        "Q": 48,
+        "R": 48,
+        "S": 48,
     }
     for col, width in widths.items():
         sheet.column_dimensions[col].width = width
@@ -399,6 +420,13 @@ def write_products_xlsx(rows: Sequence[Dict[str, str]], output_path: Path) -> No
             row.get("title", ""),
             row.get("ingredients_found", ""),
             row.get("ingredients", ""),
+            row.get("product_details", ""),
+            row.get("product_features", ""),
+            row.get("usage_recommendations", ""),
+            row.get("warnings", ""),
+            row.get("suitable_for", ""),
+            row.get("suitable_hair_types", ""),
+            row.get("active_ingredients", ""),
             row.get("image_count", ""),
             row.get("image_file", ""),
             row.get("image_url", ""),
@@ -413,13 +441,13 @@ def write_products_xlsx(rows: Sequence[Dict[str, str]], output_path: Path) -> No
                 wrap_text=True,
             )
 
-        sheet.cell(row=row_index, column=9).value = row.get("image_file", "")
+        sheet.cell(row=row_index, column=16).value = row.get("image_file", "")
         if row.get("image_source_path"):
-            sheet.cell(row=row_index, column=9).hyperlink = row.get("image_source_path", "")
-            sheet.cell(row=row_index, column=9).style = "Hyperlink"
-        make_link(sheet.cell(row=row_index, column=10), row.get("image_url", ""))
-        make_link(sheet.cell(row=row_index, column=11), row.get("url", ""))
-        make_link(sheet.cell(row=row_index, column=12), row.get("source_category", ""))
+            sheet.cell(row=row_index, column=16).hyperlink = row.get("image_source_path", "")
+            sheet.cell(row=row_index, column=16).style = "Hyperlink"
+        make_link(sheet.cell(row=row_index, column=17), row.get("image_url", ""))
+        make_link(sheet.cell(row=row_index, column=18), row.get("url", ""))
+        make_link(sheet.cell(row=row_index, column=19), row.get("source_category", ""))
 
         image_path = row.get("image_source_path", "")
         if image_path and Path(image_path).exists():

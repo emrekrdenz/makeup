@@ -37,7 +37,7 @@ Farklı port gerekirse:
 
 Her çalışma `outputs/runs/` altında ayrı bir klasör üretir.
 
-- `products.csv`: her ürün için içerik, barkod ve tek ana görsel eşleştirmesi
+- `products.csv`: her ürün için içerik, barkod, ürün özellikleri ve tek ana görsel eşleştirmesi
 - `products.xlsx`: ürünler ve ilk görsel önizlemesi
 - `images.zip`: indirilen görseller
 - `job.log`: çalışma logu
@@ -59,3 +59,13 @@ temiz_proje/
 Görseller tek klasöre kaydedilir: `outputs/runs/.../images/`.
 CSV'de her ürün satırında doğrudan `image_file` ve `image_url` kolonları bulunur.
 `image_file` değeri `images/dosya.jpg` formatındadır.
+
+Gratis ürünlerinde ayrıca şu detay kolonları gelir:
+
+- `product_details`: Gratis'te Ürün Özellikleri, Watsons'ta Ürün Açıklaması metni
+- `product_features`: özellik maddeleri
+- `usage_recommendations`: kullanım önerileri
+- `warnings`: uyarılar
+- `suitable_for`: kimler için uygun
+- `suitable_hair_types`: hangi saç tipleri için uygun
+- `active_ingredients`: etken maddeler

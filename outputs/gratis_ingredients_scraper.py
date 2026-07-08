@@ -4,11 +4,13 @@
 import argparse
 import csv
 import html
+import json
 import random
 import re
 import ssl
 import sys
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
@@ -41,6 +43,10 @@ EAN_RE = re.compile(
 IMAGE_URL_RE = re.compile(
     r"https://api\.gratis\.retter\.io/[^\"'<>\s\\]+?\.(?:jpg|jpeg|png|webp)",
     re.IGNORECASE,
+)
+JSON_LD_RE = re.compile(
+    r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL,
 )
 INGREDIENT_LABEL_RE = re.compile(
     r"(?:Ürün\s*İçeriği|Urun\s*Icerigi|İçindekiler|Icindekiler|Ingredients|INCI)\s*[:：]\s*(.*)",
@@ -184,6 +190,19 @@ def compact_text(value: str) -> str:
     return value.strip()
 
 
+def compact_multiline(value: str) -> str:
+    lines = [compact_detail_line(line) for line in value.splitlines()]
+    lines = [line for line in lines if line]
+    return "\n".join(lines)
+
+
+def compact_detail_line(value: str) -> str:
+    value = value.strip(" \n\t\"'")
+    value = re.sub(r"\s+", " ", value)
+    value = value.replace(" ,", ",").replace(" .", ".")
+    return value.strip()
+
+
 def clean_title(value: str) -> str:
     value = compact_text(html.unescape(value))
     value = re.sub(r"\s+-\s+Gratis\s*$", "", value, flags=re.IGNORECASE)
@@ -313,6 +332,129 @@ def extract_ingredients(text: str) -> str:
     return max(candidates, key=score)
 
 
+def walk_json(value: object) -> Iterable[object]:
+    yield value
+    if isinstance(value, dict):
+        for child in value.values():
+            yield from walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from walk_json(child)
+
+
+def type_matches(value: object, expected_type: str) -> bool:
+    if isinstance(value, str):
+        return value.lower() == expected_type.lower()
+    if isinstance(value, list):
+        return any(type_matches(item, expected_type) for item in value)
+    return False
+
+
+def normalize_heading(value: str) -> str:
+    value = compact_text(value).casefold().replace("\u0307", "").replace("ı", "i")
+    value = unicodedata.normalize("NFKD", value)
+    value = "".join(char for char in value if not unicodedata.combining(char))
+    return value
+
+
+def normalize_product_details(value: str) -> str:
+    text = decode_page_text(value)
+    text = re.sub(r"\s*•\s*", "\n• ", text)
+    text = re.sub(r"\n\s*\n\s*", "\n\n", text)
+    text = re.sub(r"(?<!\n)(Kullanım Önerileri|Uyarılar)\s*(?=\n|$)", r"\n\n\1", text, flags=re.IGNORECASE)
+    return compact_multiline(text)
+
+
+def extract_product_details(source: str) -> str:
+    for match in JSON_LD_RE.finditer(source):
+        raw_json = html.unescape(match.group(1)).strip()
+        try:
+            data = json.loads(raw_json)
+        except json.JSONDecodeError:
+            continue
+
+        for item in walk_json(data):
+            if not isinstance(item, dict):
+                continue
+            if not type_matches(item.get("@type"), "Product"):
+                continue
+            description = item.get("description")
+            if isinstance(description, str) and description.strip():
+                return normalize_product_details(description)
+
+    return ""
+
+
+def detail_section_key(line: str) -> Optional[str]:
+    normalized = normalize_heading(line)
+
+    if normalized in {"urun ozellikleri", "ozellikler"}:
+        return "product_features"
+    if normalized in {"kullanim", "kullanim onerileri"}:
+        return "usage_recommendations"
+    if normalized in {"uyarilar", "uyari"}:
+        return "warnings"
+    if "kimler icin uygundur" in normalized:
+        return "suitable_for"
+    if "hangi sac tipleri icin uygundur" in normalized:
+        return "suitable_hair_types"
+    if "etken maddeleri nelerdir" in normalized:
+        return "active_ingredients"
+    if normalized.startswith("urun icerigi"):
+        return "ingredients"
+    return None
+
+
+def split_product_details(details: str) -> Dict[str, str]:
+    sections: Dict[str, List[str]] = {
+        "product_features": [],
+        "usage_recommendations": [],
+        "warnings": [],
+        "suitable_for": [],
+        "suitable_hair_types": [],
+        "active_ingredients": [],
+        "ingredients": [],
+        "preamble": [],
+    }
+    current_key = "preamble"
+
+    for raw_line in details.splitlines():
+        line = compact_detail_line(raw_line)
+        if not line:
+            continue
+
+        inline_heading = re.match(r"^(Ürün İçeriği|Urun Icerigi|Uyarılar|Uyarilar|Kullanım Önerileri|Kullanim Onerileri)\s*[:：]\s*(.*)$", line, re.IGNORECASE)
+        if inline_heading:
+            current_key = detail_section_key(inline_heading.group(1)) or current_key
+            rest = compact_detail_line(inline_heading.group(2))
+            if rest:
+                sections.setdefault(current_key, []).append(rest)
+            continue
+
+        heading_key = detail_section_key(line)
+        if heading_key:
+            current_key = heading_key
+            continue
+
+        sections.setdefault(current_key, []).append(line)
+
+    if not sections["product_features"] and sections["preamble"]:
+        sections["product_features"] = sections["preamble"]
+
+    if (
+        len(sections["product_features"]) > 1
+        and not sections["product_features"][0].startswith("•")
+        and any(line.startswith("•") for line in sections["product_features"][1:])
+    ):
+        sections["product_features"] = sections["product_features"][1:]
+
+    return {
+        key: compact_multiline("\n".join(value))
+        for key, value in sections.items()
+        if key != "preamble"
+    }
+
+
 def extract_image_urls(source: str, product_id: str) -> List[str]:
     decoded = decode_escaped_source(source)
     urls: List[str] = []
@@ -383,6 +525,8 @@ def parse_product(
     source = fetch_html(target.url, context, timeout, retries, product_delay)
     text = decode_page_text(source)
     ingredients = extract_ingredients(text)
+    product_details = extract_product_details(source)
+    product_detail_sections = split_product_details(product_details)
     product_id = extract_product_id(target.url)
     image_urls = extract_image_urls(source, product_id)
     image_urls = image_urls[:1]
@@ -407,6 +551,13 @@ def parse_product(
         "barcode": extract_barcode(source, text),
         "ingredients_found": "yes" if ingredients else "no",
         "ingredients": ingredients,
+        "product_details": product_details,
+        "product_features": product_detail_sections.get("product_features", ""),
+        "usage_recommendations": product_detail_sections.get("usage_recommendations", ""),
+        "warnings": product_detail_sections.get("warnings", ""),
+        "suitable_for": product_detail_sections.get("suitable_for", ""),
+        "suitable_hair_types": product_detail_sections.get("suitable_hair_types", ""),
+        "active_ingredients": product_detail_sections.get("active_ingredients", ""),
         "image_count": str(len(image_urls)),
         "image_urls": " | ".join(image_urls),
         "image_files": " | ".join(image_files),
@@ -423,6 +574,13 @@ def write_csv(rows: Sequence[Dict[str, str]], output_path: str) -> None:
         "barcode",
         "ingredients_found",
         "ingredients",
+        "product_details",
+        "product_features",
+        "usage_recommendations",
+        "warnings",
+        "suitable_for",
+        "suitable_hair_types",
+        "active_ingredients",
         "image_count",
         "image_urls",
         "image_files",
